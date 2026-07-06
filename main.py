@@ -5,12 +5,16 @@ OCRyaid — API simples de OCR com FastAPI + Tesseract.
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 from PIL import Image
-import subprocess
-import tempfile
+import pytesseract
+import shutil
 import io
 import os
 
-TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+_WINDOWS_DEFAULT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+TESSERACT_CMD = shutil.which("tesseract") or (
+    _WINDOWS_DEFAULT if os.path.exists(_WINDOWS_DEFAULT) else "tesseract"
+)
+pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
 app = FastAPI(
     title="OCRyaid",
@@ -20,25 +24,7 @@ app = FastAPI(
 
 
 def run_tesseract(img: Image.Image, lang: str = "por") -> str:
-    """Executa o Tesseract via subprocess diretamente, sem pytesseract."""
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-        tmp_path = tmp.name
-        img.save(tmp, format="PNG")
-
-    try:
-        result = subprocess.run(
-            [TESSERACT_CMD, tmp_path, "stdout", "-l", lang],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=60,
-        )
-        if result.returncode != 0:
-            error_msg = (result.stderr or "").strip()
-            raise RuntimeError(error_msg or f"Tesseract retornou código {result.returncode}")
-        return (result.stdout or "").strip()
-    finally:
-        os.unlink(tmp_path)
+    return pytesseract.image_to_string(img, lang=lang).strip()
 
 
 
@@ -69,7 +55,7 @@ async def extract_text(
 
     try:
         text = run_tesseract(img, lang=lang)
-    except FileNotFoundError:
+    except pytesseract.TesseractNotFoundError:
         raise HTTPException(
             status_code=500,
             detail=f"Tesseract não encontrado em: {TESSERACT_CMD}",
