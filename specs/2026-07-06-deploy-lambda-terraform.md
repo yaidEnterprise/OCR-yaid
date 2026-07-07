@@ -155,8 +155,9 @@ Valores **esperados** (a confirmar contra o artefato real do release, pois a doc
 - `aws_lambda_permission` autorizando o API Gateway a invocar a Lambda.
 
 ### 7.5 Variáveis do Terraform
-- `region` (default `us-east-1`), `project_name`/prefixo, `api_key` (sensível), referências dos objetos S3.
+- `region` (default `us-east-1`), `project_name`/prefixo, `stage`, `api_key` (sensível), referências dos objetos S3.
 - `api_key` recebido via `TF_VAR_api_key` (do secret do environment).
+- `stage` recebido via `TF_VAR_stage` (derivado do nome da branch do deploy — ver §8.1). Usado para nomear/taguear recursos (ex.: `${project_name}-${stage}`) e como tag `Stage` nos recursos.
 
 ### 7.6 Outputs
 - `api_endpoint` (invoke URL do stage `$default`).
@@ -172,6 +173,16 @@ Valores **esperados** (a confirmar contra o artefato real do release, pois a doc
 - **Environment:** `prod` (fornece secrets e variables; permite proteção/aprovação se configurada no GitHub).
 - **Jobs sequenciais** (cada um depende do anterior via `needs`):
 
+### 8.1 `STAGE` (derivado da branch)
+- Variável **`STAGE` derivada em runtime do nome da branch do deploy** — `github.ref_name` (no caso, `prod`). **Não** é um secret/variable do GitHub; é definida dentro dos jobs.
+- Exposta via `env` no nível do workflow/job:
+  ```yaml
+  env:
+    STAGE: ${{ github.ref_name }}
+  ```
+- Repassada ao Terraform como `TF_VAR_stage` nos steps de `plan`/`apply`, alimentando `var.stage` (§7.5) para nomeação/tag dos recursos.
+- Consequência: se no futuro o deploy passar a rodar em outra branch, `STAGE` acompanha automaticamente o nome dela, sem hardcode.
+
 ### Job 1 — `build`
 1. `actions/checkout`.
 2. `actions/setup-python` (3.12).
@@ -184,7 +195,7 @@ Valores **esperados** (a confirmar contra o artefato real do release, pois a doc
 2. Configurar credenciais AWS (access keys do environment `prod`).
 3. `terraform init` (backend S3, `-backend-config` do bucket).
 4. `terraform validate` + `terraform fmt -check`.
-5. `terraform plan -out=tfplan` (passando `TF_VAR_api_key`, caminhos dos zips).
+5. `terraform plan -out=tfplan` (passando `TF_VAR_api_key`, `TF_VAR_stage` (= `STAGE`), caminhos dos zips).
 6. `upload-artifact` do `tfplan` (+ o `.terraform` lockfile se necessário).
 
 ### Job 3 — `apply` (`needs: plan`)
@@ -213,6 +224,8 @@ Valores **esperados** (a confirmar contra o artefato real do release, pois a doc
 | `AWS_REGION` | `us-east-1` |
 | `TF_STATE_BUCKET` | Nome do bucket S3 do projeto |
 | `PROJECT_NAME` | Prefixo dos recursos (ex.: `ocryaid`) |
+
+> `STAGE` **não** é cadastrado aqui: é derivado em runtime do nome da branch (`github.ref_name`) dentro dos jobs (§8.1) e repassado ao Terraform via `TF_VAR_stage`.
 
 ---
 
