@@ -102,17 +102,19 @@ Roda em `ubuntu-latest` (x86_64 Linux), compatível com o alvo `linux/x86_64` da
 2. Descompactar; **injetar `por.traineddata`** (baixado de `tessdata_fast`) no diretório de tessdata do layer.
 3. Re-zipar mantendo a estrutura interna esperada (ver §7.1) → `layer.zip`.
 
-### 6.3 Estrutura interna do layer — **A VALIDAR na implementação**
+### 6.3 Estrutura interna do layer — **verificado**
 
-Valores **esperados** (a confirmar contra o artefato real do release, pois a doc pública não os confirma explicitamente):
+Asset real inspecionado: [`tesseract-al2023-x86.zip`](https://github.com/bweigel/aws-lambda-tesseract-layer/releases/download/v5.4.0/tesseract-al2023-x86.zip) (release `v5.4.0`, sha256 `f6312eed51baea7514a32a79036908b782dde7a558d4f5817a0a206221797868`, 11.026.450 bytes). `TESSERACT-README.md` embutido confirma: `TESSERACT_VERSION=5.5.2`, `LEPTONICA_VERSION=1.87.0`, `TESSERACT_DATA_FILES=tessdata_fast/4.1.0`, `TESSERACT_DATA_LANGUAGES=osd,eng,deu`.
+
+Estrutura real do zip (raiz):
 
 | Conteúdo | Caminho no zip | Caminho em runtime (`/opt`) |
 |----------|----------------|------------------------------|
-| Binário | `tesseract/bin/tesseract` | `/opt/tesseract/bin/tesseract` |
-| Libs `.so` | `tesseract/lib/` | `/opt/tesseract/lib/` |
-| tessdata | `tesseract/share/tessdata/` | `/opt/tesseract/share/tessdata/` |
+| Binário | `bin/tesseract` | `/opt/bin/tesseract` |
+| Libs `.so` (`libtesseract.so.5`, `libleptonica.so.6`, `libgomp.so.1`, `libpng16.so.16`, `libjpeg.so.62`, `libwebp.so.7`, `libwebpmux.so.3`, `libjbig.so.2.1`, `libtiff.so.5`) | `lib/` | `/opt/lib/` |
+| tessdata (`osd.traineddata`, `deu.traineddata`, `eng.traineddata`) | `tesseract/share/tessdata/` | `/opt/tesseract/share/tessdata/` |
 
-**Ação na implementação:** inspecionar o zip do release, confirmar os caminhos e ajustar (a) o destino da injeção do `por.traineddata` e (b) as env vars da Lambda (§7.3) caso a estrutura difira.
+**Injeção do `por.traineddata`:** baixar de `tessdata_fast` **tag `4.1.0`** (mesma versão do resto dos dados do layer, evita mismatch) e adicionar em `tesseract/share/tessdata/por.traineddata` dentro do zip, antes de re-zipar. Não é necessário remover `deu` (não usado, mas inofensivo manter).
 
 ---
 
@@ -141,9 +143,9 @@ Valores **esperados** (a confirmar contra o artefato real do release, pois a doc
   - `layers = [layer_version.arn]`.
   - `memory_size = 2048`, `timeout = 30` (OCR pode ser lento; `/tmp` default 512 MB é suficiente).
   - `environment.variables`:
-    - `TESSERACT_CMD = /opt/tesseract/bin/tesseract`
+    - `TESSERACT_CMD = /opt/bin/tesseract`
     - `TESSDATA_PREFIX = /opt/tesseract/share/tessdata`
-    - `LD_LIBRARY_PATH = /opt/tesseract/lib`
+    - `LD_LIBRARY_PATH = /opt/lib`
     - `API_KEY = var.api_key` (sensível; vem do secret `API_KEY`)
 - `aws_iam_role` de execução + attach de `AWSLambdaBasicExecutionRole` (logs no CloudWatch).
 
@@ -252,8 +254,8 @@ Valores **esperados** (a confirmar contra o artefato real do release, pois a doc
 
 ## 12. Riscos e pontos a validar na implementação
 
-1. **Estrutura interna do layer (§6.3):** confirmar caminhos reais do prebuilt e ajustar injeção do `por.traineddata` + env vars da Lambda. **Maior incerteza da spec.**
-2. **Tamanho do bundle:** function + layer descompactados devem caber no limite de 250 MB da Lambda. O layer do Tesseract é grande; monitorar.
-3. **Cold start:** carregar libs do Tesseract + tessdata pode aumentar o cold start; `memory_size` de 2048 MB ajuda.
-4. **`payload_format_version 2.0`** deve casar com a versão do Mangum (usar Mangum recente que suporte o formato 2.0 do HTTP API).
-5. **`/tmp` (512 MB):** o pytesseract grava arquivos temporários; suficiente para imagens típicas, mas requests com imagens muito grandes podem exigir aumento de ephemeral storage.
+1. **Tamanho do bundle:** function + layer descompactados devem caber no limite de 250 MB da Lambda (layer atual ~25 MB descompactado + `por.traineddata` ~1-2 MB; folga confortável).
+2. **Cold start:** carregar libs do Tesseract + tessdata pode aumentar o cold start; `memory_size` de 2048 MB ajuda.
+3. **`payload_format_version 2.0`** deve casar com a versão do Mangum (usar Mangum recente que suporte o formato 2.0 do HTTP API).
+4. **`/tmp` (512 MB):** o pytesseract grava arquivos temporários; suficiente para imagens típicas, mas requests com imagens muito grandes podem exigir aumento de ephemeral storage.
+5. **Versão do release do layer:** a pipeline deve fixar a versão (`v5.4.0` / asset `tesseract-al2023-x86.zip`) em vez de sempre puxar "latest", para builds reprodutíveis. Atualizar deliberadamente quando necessário.
