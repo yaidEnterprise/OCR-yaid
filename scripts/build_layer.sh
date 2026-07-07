@@ -12,10 +12,10 @@ BASE_ZIP="$ROOT_DIR/build/tesseract-base.zip"
 rm -rf "$WORK_DIR" "$ZIP_PATH" "$BASE_ZIP"
 mkdir -p "$WORK_DIR" "$ROOT_DIR/build"
 
-curl -sL -o "$BASE_ZIP" "$LAYER_RELEASE_URL"
+curl -fsL -o "$BASE_ZIP" "$LAYER_RELEASE_URL"
 unzip -q "$BASE_ZIP" -d "$WORK_DIR"
 
-curl -sL -o "$WORK_DIR/tesseract/share/tessdata/por.traineddata" "$TESSDATA_POR_URL"
+curl -fsL -o "$WORK_DIR/tesseract/share/tessdata/por.traineddata" "$TESSDATA_POR_URL"
 
 cd "$WORK_DIR"
 zip -r -q "$ZIP_PATH" .
