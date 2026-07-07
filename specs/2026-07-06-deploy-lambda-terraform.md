@@ -160,6 +160,7 @@ Estrutura real do zip (raiz):
 - `region` (default `us-east-1`), `project_name`/prefixo, `stage`, `api_key` (sensível), referências dos objetos S3.
 - `api_key` recebido via `TF_VAR_api_key` (do secret do environment).
 - `stage` recebido via `TF_VAR_stage` (derivado do nome da branch do deploy — ver §8.1). Usado para nomear/taguear recursos (ex.: `${project_name}-${stage}`) e como tag `Stage` nos recursos.
+- `project_name` recebido via `TF_VAR_project_name` (derivado do nome do repositório GitHub, minúsculo e sem caracteres especiais — ver §8.1). Usado no mesmo padrão de nomeação/tag.
 
 ### 7.6 Outputs
 - `api_endpoint` (invoke URL do stage `$default`).
@@ -175,15 +176,26 @@ Estrutura real do zip (raiz):
 - **Environment:** `prod` (fornece secrets e variables; permite proteção/aprovação se configurada no GitHub).
 - **Jobs sequenciais** (cada um depende do anterior via `needs`):
 
-### 8.1 `STAGE` (derivado da branch)
-- Variável **`STAGE` derivada em runtime do nome da branch do deploy** — `github.ref_name` (no caso, `prod`). **Não** é um secret/variable do GitHub; é definida dentro dos jobs.
-- Exposta via `env` no nível do workflow/job:
+### 8.1 `STAGE` e `PROJECT_NAME` (derivados em runtime, não cadastrados no GitHub)
+
+- **`STAGE`**: derivada do nome da branch do deploy — `github.ref_name` (no caso, `prod`).
   ```yaml
   env:
     STAGE: ${{ github.ref_name }}
   ```
-- Repassada ao Terraform como `TF_VAR_stage` nos steps de `plan`/`apply`, alimentando `var.stage` (§7.5) para nomeação/tag dos recursos.
-- Consequência: se no futuro o deploy passar a rodar em outra branch, `STAGE` acompanha automaticamente o nome dela, sem hardcode.
+  Repassada ao Terraform como `TF_VAR_stage`, alimentando `var.stage` (§7.5).
+
+- **`PROJECT_NAME`**: derivada do **nome do repositório** (`github.event.repository.name`, no caso `OCR-yaid`), normalizado para **minúsculo e sem caracteres especiais** (apenas `[a-z0-9]`, hífens e demais símbolos removidos) — ex.: `OCR-yaid` → `ocryaid`. Calculada em um step de shell (não há expressão nativa do GitHub Actions para strip de caracteres):
+  ```yaml
+  - name: Derive PROJECT_NAME
+    run: |
+      RAW_NAME="${{ github.event.repository.name }}"
+      PROJECT_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+      echo "PROJECT_NAME=$PROJECT_NAME" >> "$GITHUB_ENV"
+  ```
+  Repassada ao Terraform como `TF_VAR_project_name`, alimentando `var.project_name` (§7.5).
+
+- Nenhuma das duas é secret/variable do GitHub — ambas são calculadas dentro dos jobs `plan`/`apply`. Consequência: se o repositório for renomeado ou o deploy passar a rodar em outra branch, ambas acompanham automaticamente, sem hardcode.
 
 ### Job 1 — `build`
 1. `actions/checkout`.
@@ -225,9 +237,8 @@ Estrutura real do zip (raiz):
 |------|-------|
 | `AWS_REGION` | `us-east-1` |
 | `TF_STATE_BUCKET` | Nome do bucket S3 do projeto |
-| `PROJECT_NAME` | Prefixo dos recursos (ex.: `ocryaid`) |
 
-> `STAGE` **não** é cadastrado aqui: é derivado em runtime do nome da branch (`github.ref_name`) dentro dos jobs (§8.1) e repassado ao Terraform via `TF_VAR_stage`.
+> `STAGE` e `PROJECT_NAME` **não** são cadastrados aqui: ambos são derivados em runtime dentro dos jobs (§8.1) — `STAGE` do nome da branch (`github.ref_name`), `PROJECT_NAME` do nome do repositório (`github.event.repository.name`, normalizado para minúsculo sem caracteres especiais) — e repassados ao Terraform via `TF_VAR_stage` e `TF_VAR_project_name`.
 
 ---
 

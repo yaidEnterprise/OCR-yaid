@@ -21,6 +21,7 @@
 - Env vars da Lambda: `TESSERACT_CMD=/opt/bin/tesseract`, `TESSDATA_PREFIX=/opt/tesseract/share/tessdata`, `LD_LIBRARY_PATH=/opt/lib`.
 - Backend do Terraform: **um único bucket S3 do projeto**, `key = "state/terraform.tfstate"`, `use_lockfile = true` (sem DynamoDB). Artefatos de build no mesmo bucket sob `artifacts/`.
 - `STAGE` **não** é secret/variable do GitHub — é derivado em runtime de `github.ref_name` dentro dos jobs e repassado como `TF_VAR_stage`.
+- `PROJECT_NAME` **também não** é secret/variable do GitHub — é derivado em runtime do nome do repositório (`github.event.repository.name`, ex.: `OCR-yaid`), normalizado para **minúsculo e sem caracteres especiais** (`tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9'`, resultando em `ocryaid`), e repassado como `TF_VAR_project_name`.
 - Auth AWS na pipeline: **access keys** (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) do environment `prod`.
 - Trigger da pipeline: `push` na branch `prod`; environment do job = `prod`.
 - Fora de escopo: domínio customizado, WAF/rate limiting, OIDC, arquitetura arm64, outros idiomas, múltiplos ambientes.
@@ -34,7 +35,8 @@ Estes passos **não fazem parte das tasks abaixo** — são ações fora do repo
 1. Criar o bucket S3 do projeto em `us-east-1` (versionamento recomendado).
 2. Criar o environment `prod` no GitHub e cadastrar:
    - Secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `API_KEY` (gerado com `openssl rand -hex 32`).
-   - Variables: `AWS_REGION=us-east-1`, `TF_STATE_BUCKET=<nome do bucket>`, `PROJECT_NAME=ocryaid` (ou outro prefixo).
+   - Variables: `AWS_REGION=us-east-1`, `TF_STATE_BUCKET=<nome do bucket>`.
+   - **Não** cadastrar `PROJECT_NAME` — é derivado em runtime do nome do repositório (ver Global Constraints e Task 9).
 3. Criar a branch `prod` no repositório.
 4. Garantir que as credenciais AWS tenham permissão para: S3, Lambda, API Gateway v2, IAM, CloudWatch Logs.
 
@@ -840,6 +842,12 @@ jobs:
           name: build-artifacts
           path: build
 
+      - name: Derive PROJECT_NAME from repo name
+        run: |
+          RAW_NAME="${{ github.event.repository.name }}"
+          PROJECT_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+          echo "PROJECT_NAME=$PROJECT_NAME" >> "$GITHUB_ENV"
+
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.10.5"
@@ -862,7 +870,7 @@ jobs:
 
       - name: Terraform plan
         env:
-          TF_VAR_project_name: ${{ vars.PROJECT_NAME }}
+          TF_VAR_project_name: ${{ env.PROJECT_NAME }}
           TF_VAR_stage: ${{ env.STAGE }}
           TF_VAR_api_key: ${{ secrets.API_KEY }}
           TF_VAR_artifacts_bucket: ${{ vars.TF_STATE_BUCKET }}
