@@ -4,7 +4,7 @@
 
 **Goal:** Publicar a API OCRyaid (FastAPI) como Lambda x86_64, atrás de um API Gateway HTTP v2 genérico, com Tesseract fornecido por Lambda Layer, tudo provisionado via Terraform (`iac/`, backend S3) e implantado por uma pipeline de 3 jobs do GitHub Actions disparada em push na branch `prod`.
 
-**Architecture:** `main.py` ganha um handler Mangum e uma dependency de API key; dois scripts de shell empacotam `function.zip` e `layer.zip` (este injeta `por.traineddata` no layer prebuilt do bweigel); o Terraform em `iac/` sobe os zips para S3 e cria Layer, Function, API Gateway HTTP v2 e IAM; a pipeline builda os artefatos, roda `terraform plan` e depois `terraform apply` do plano salvo, usando o environment `prod` do GitHub para credenciais.
+**Architecture:** `main.py` ganha um handler Mangum e uma dependency de API key; dois scripts de shell empacotam `function.zip` e `layer.zip` (este injeta `por.traineddata` no layer prebuilt do bweigel); o Terraform em `iac/` sobe os zips para S3 e cria Layer, Function, API Gateway HTTP v2 e IAM; a pipeline builda os artefatos, roda `terraform plan` (revisão humana no log, sem persistir plan-file) e depois `terraform apply -auto-approve` (recalcula e aplica o plano em um único passo), usando o environment `prod` do GitHub para credenciais.
 
 **Tech Stack:** FastAPI, Mangum, pytesseract, Terraform ≥ 1.10, provider `hashicorp/aws` ~> 6.0, GitHub Actions, Python 3.12.
 
@@ -432,11 +432,12 @@ Adicionar ao final de `.gitignore`:
 
 ```
 iac/.terraform/
-iac/.terraform.lock.hcl
 iac/tfplan
 iac/*.tfstate
 iac/*.tfstate.backup
 ```
+
+> Nota: `iac/.terraform.lock.hcl` **não** entra no `.gitignore` — o lock file do provider é commitado para garantir que os jobs `plan` e `apply` da pipeline resolvam sempre a mesma versão do provider `aws`.
 
 - [ ] **Step 2: Criar `iac/versions.tf`**
 
@@ -877,13 +878,7 @@ jobs:
           TF_VAR_region: ${{ vars.AWS_REGION }}
           TF_VAR_function_zip_path: ${{ github.workspace }}/build/function.zip
           TF_VAR_layer_zip_path: ${{ github.workspace }}/build/layer.zip
-        run: terraform plan -out=tfplan
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: iac/tfplan
-          retention-days: 1
+        run: terraform plan
 
   apply:
     runs-on: ubuntu-latest
@@ -900,10 +895,11 @@ jobs:
           name: build-artifacts
           path: build
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-          path: iac
+      - name: Derive PROJECT_NAME from repo name
+        run: |
+          RAW_NAME="${{ github.event.repository.name }}"
+          PROJECT_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+          echo "PROJECT_NAME=$PROJECT_NAME" >> "$GITHUB_ENV"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -920,7 +916,15 @@ jobs:
         run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
 
       - name: Terraform apply
-        run: terraform apply -auto-approve tfplan
+        env:
+          TF_VAR_project_name: ${{ env.PROJECT_NAME }}
+          TF_VAR_stage: ${{ env.STAGE }}
+          TF_VAR_api_key: ${{ secrets.API_KEY }}
+          TF_VAR_artifacts_bucket: ${{ vars.TF_STATE_BUCKET }}
+          TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_function_zip_path: ${{ github.workspace }}/build/function.zip
+          TF_VAR_layer_zip_path: ${{ github.workspace }}/build/layer.zip
+        run: terraform apply -auto-approve
 
       - name: Smoke test /health
         run: |

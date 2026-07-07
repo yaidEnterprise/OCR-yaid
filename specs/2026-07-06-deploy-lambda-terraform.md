@@ -209,17 +209,17 @@ Estrutura real do zip (raiz):
 2. Configurar credenciais AWS (access keys do environment `prod`).
 3. `terraform init` (backend S3, `-backend-config` do bucket).
 4. `terraform validate` + `terraform fmt -check`.
-5. `terraform plan -out=tfplan` (passando `TF_VAR_api_key`, `TF_VAR_stage` (= `STAGE`), caminhos dos zips).
-6. `upload-artifact` do `tfplan` (+ o `.terraform` lockfile se necessário).
+5. `terraform plan` (sem `-out`; passando `TF_VAR_api_key`, `TF_VAR_stage` (= `STAGE`), caminhos dos zips) — plano exibido no log do job para revisão humana.
 
 ### Job 3 — `apply` (`needs: plan`)
-1. `download-artifact` (zips + `tfplan`).
-2. Configurar credenciais AWS.
-3. `terraform init`.
-4. `terraform apply -auto-approve tfplan`.
-5. (Opcional) smoke test: `curl` em `GET /health` da `api_endpoint`.
+1. `download-artifact` (zips).
+2. Derivar `PROJECT_NAME` (mesmo step do job `plan`, §8.1).
+3. Configurar credenciais AWS.
+4. `terraform init`.
+5. `terraform apply -auto-approve` (sem arquivo de plano; recalcula e aplica o plano em um único passo, usando os mesmos `TF_VAR_*` do job `plan`).
+6. (Opcional) smoke test: `curl` em `GET /health` da `api_endpoint`.
 
-> **Observação:** por o backend ser remoto (S3), o state é compartilhado entre os jobs `plan` e `apply`. O `tfplan` é passado como artifact para garantir que o `apply` execute exatamente o plano revisado.
+> **Observação:** por o backend ser remoto (S3), o state é compartilhado entre os jobs `plan` e `apply`. Não há artifact de `tfplan`: um plan-file binário conteria `API_KEY` em texto claro (Terraform só mascara valores sensíveis na saída textual do `plan`, não no arquivo binário salvo por `-out`), e esse artifact ficaria acessível a qualquer pessoa com acesso aos runs da pipeline. Por isso o job `plan` roda `terraform plan` apenas para revisão humana no log da CI (valores `sensitive = true` aparecem mascarados como `(sensitive value)`), e o job `apply` recalcula seu próprio plano com os mesmos `TF_VAR_*` e aplica em um único `terraform apply -auto-approve`.
 
 ---
 
