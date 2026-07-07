@@ -1,0 +1,137 @@
+name: Deploy prod
+
+on:
+  push:
+    branches: [prod]
+
+env:
+  STAGE: ${{ github.ref_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build function.zip
+        run: |
+          chmod +x scripts/build_function.sh
+          scripts/build_function.sh
+
+      - name: Build layer.zip
+        run: |
+          chmod +x scripts/build_layer.sh
+          scripts/build_layer.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            build/function.zip
+            build/layer.zip
+          retention-days: 1
+
+  plan:
+    runs-on: ubuntu-latest
+    needs: build
+    environment: prod
+    defaults:
+      run:
+        working-directory: iac
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: build
+
+      - name: Derive PROJECT_NAME from repo name
+        run: |
+          RAW_NAME="${{ github.event.repository.name }}"
+          PROJECT_NAME=$(echo "$RAW_NAME" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+          echo "PROJECT_NAME=$PROJECT_NAME" >> "$GITHUB_ENV"
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform init
+        run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform fmt check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        env:
+          TF_VAR_project_name: ${{ env.PROJECT_NAME }}
+          TF_VAR_stage: ${{ env.STAGE }}
+          TF_VAR_api_key: ${{ secrets.API_KEY }}
+          TF_VAR_artifacts_bucket: ${{ vars.TF_STATE_BUCKET }}
+          TF_VAR_region: ${{ vars.AWS_REGION }}
+          TF_VAR_function_zip_path: ${{ github.workspace }}/build/function.zip
+          TF_VAR_layer_zip_path: ${{ github.workspace }}/build/layer.zip
+        run: terraform plan -out=tfplan
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: iac/tfplan
+          retention-days: 1
+
+  apply:
+    runs-on: ubuntu-latest
+    needs: plan
+    environment: prod
+    defaults:
+      run:
+        working-directory: iac
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: build-artifacts
+          path: build
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: iac
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.10.5"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform init
+        run: terraform init -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+
+      - name: Terraform apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Smoke test /health
+        run: |
+          API_URL=$(terraform output -raw api_endpoint)
+          curl -sf "$API_URL/health" | tee /dev/stderr | grep -q '"status":"ok"'
