@@ -7,3 +7,9 @@ venv/
 *.egg-info/
 dist/
 build/
+
+iac/.terraform/
+iac/.terraform.lock.hcl
+iac/tfplan
+iac/*.tfstate
+iac/*.tfstate.backup
