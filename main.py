@@ -12,8 +12,10 @@ import io
 import os
 
 _WINDOWS_DEFAULT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-TESSERACT_CMD = shutil.which("tesseract") or (
-    _WINDOWS_DEFAULT if os.path.exists(_WINDOWS_DEFAULT) else "tesseract"
+TESSERACT_CMD = (
+    os.environ.get("TESSERACT_CMD")
+    or shutil.which("tesseract")
+    or (_WINDOWS_DEFAULT if os.path.exists(_WINDOWS_DEFAULT) else "tesseract")
 )
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
 
@@ -81,6 +83,11 @@ async def extract_text(
             "text": text,
         }
     )
+
+
+from mangum import Mangum
+
+handler = Mangum(app)
 
 
 if __name__ == "__main__":

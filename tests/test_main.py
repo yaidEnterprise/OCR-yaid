@@ -68,3 +68,23 @@ def test_ocr_accepts_correct_api_key(client, monkeypatch, sample_png_bytes):
     )
     assert response.status_code == 200
     assert response.json()["text"] == "texto"
+
+
+import importlib
+import os
+
+
+def test_handler_is_a_mangum_instance():
+    from mangum import Mangum
+
+    assert isinstance(main.handler, Mangum)
+
+
+def test_tesseract_cmd_prefers_env_var(monkeypatch):
+    monkeypatch.setenv("TESSERACT_CMD", "/opt/bin/tesseract")
+    reloaded = importlib.reload(main)
+    try:
+        assert reloaded.TESSERACT_CMD == "/opt/bin/tesseract"
+    finally:
+        monkeypatch.delenv("TESSERACT_CMD", raising=False)
+        importlib.reload(main)
