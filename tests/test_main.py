@@ -39,6 +39,38 @@ def test_ocr_allows_request_when_api_key_not_configured(client, monkeypatch, sam
     assert response.json()["text"] == "texto"
 
 
+def test_ocr_success_logs_captured_text(client, monkeypatch, caplog, sample_png_bytes):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(main, "run_tesseract", lambda img, lang="por": "texto capturado")
+    with caplog.at_level("INFO", logger="ocryaid"):
+        response = client.post(
+            "/ocr",
+            files={"image": ("test.png", sample_png_bytes, "image/png")},
+        )
+    assert response.status_code == 200
+    messages = [record.message for record in caplog.records]
+    assert any("test.png" in m and "texto capturado" in m for m in messages)
+
+
+def test_ocr_failure_logs_error_with_stack_trace(client, monkeypatch, caplog, sample_png_bytes):
+    monkeypatch.delenv("API_KEY", raising=False)
+
+    def failing_run_tesseract(img, lang="por"):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main, "run_tesseract", failing_run_tesseract)
+    with caplog.at_level("INFO", logger="ocryaid"):
+        response = client.post(
+            "/ocr",
+            files={"image": ("test.png", sample_png_bytes, "image/png")},
+        )
+    assert response.status_code == 500
+    error_records = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len(error_records) == 1
+    assert "test.png" in error_records[0].message
+    assert error_records[0].exc_info is not None
+
+
 def test_ocr_rejects_missing_api_key(client, monkeypatch, sample_png_bytes):
     monkeypatch.setenv("API_KEY", "super-secret")
     response = client.post(
