@@ -9,6 +9,7 @@ import pytesseract
 import secrets
 import shutil
 import io
+import logging
 import os
 
 _WINDOWS_DEFAULT = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -18,6 +19,13 @@ TESSERACT_CMD = (
     or (_WINDOWS_DEFAULT if os.path.exists(_WINDOWS_DEFAULT) else "tesseract")
 )
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+# basicConfig cria o handler de console para dev local; no Lambda o runtime já
+# anexa seu próprio handler ao root logger (basicConfig vira no-op lá), então
+# o setLevel explícito garante que INFO apareça no CloudWatch nos dois casos.
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+logging.getLogger().setLevel(logging.INFO)
+logger = logging.getLogger("ocryaid")
 
 app = FastAPI(
     title="OCRyaid",
@@ -66,15 +74,30 @@ async def extract_text(
     except Exception:
         raise HTTPException(status_code=400, detail="Não foi possível abrir a imagem enviada.")
 
+    logger.info(
+        "OCR request: filename=%s lang=%s size=%d bytes", image.filename, lang, len(contents)
+    )
+
+    if img.format not in pytesseract.pytesseract.SUPPORTED_FORMATS:
+        # Fotos de celular (modo Retrato/HDR/Live Photo) costumam vir em MPO,
+        # um container multi-frame que o Tesseract não reconhece mesmo sendo
+        # essencialmente um JPEG. Reencodar sem formato força o pytesseract a
+        # salvar como PNG antes de enviar ao Tesseract.
+        img.format = None
+
     try:
         text = run_tesseract(img, lang=lang)
     except pytesseract.TesseractNotFoundError:
+        logger.exception("Tesseract não encontrado: filename=%s cmd=%s", image.filename, TESSERACT_CMD)
         raise HTTPException(
             status_code=500,
             detail=f"Tesseract não encontrado em: {TESSERACT_CMD}",
         )
     except Exception as e:
+        logger.exception("Erro ao processar OCR: filename=%s", image.filename)
         raise HTTPException(status_code=500, detail=f"Erro ao processar OCR: {e}")
+
+    logger.info("OCR result: filename=%s lang=%s text=%r", image.filename, lang, text)
 
     return JSONResponse(
         content={
