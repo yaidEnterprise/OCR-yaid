@@ -78,6 +78,13 @@ async def extract_text(
         "OCR request: filename=%s lang=%s size=%d bytes", image.filename, lang, len(contents)
     )
 
+    if img.format not in pytesseract.pytesseract.SUPPORTED_FORMATS:
+        # Fotos de celular (modo Retrato/HDR/Live Photo) costumam vir em MPO,
+        # um container multi-frame que o Tesseract não reconhece mesmo sendo
+        # essencialmente um JPEG. Reencodar sem formato força o pytesseract a
+        # salvar como PNG antes de enviar ao Tesseract.
+        img.format = None
+
     try:
         text = run_tesseract(img, lang=lang)
     except pytesseract.TesseractNotFoundError:

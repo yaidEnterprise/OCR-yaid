@@ -21,6 +21,18 @@ def sample_png_bytes():
     return buf.read()
 
 
+@pytest.fixture
+def sample_mpo_bytes():
+    # Fotos de celular tiradas em modo Retrato/HDR/Live Photo são salvas como MPO
+    # (container JPEG multi-frame), não como JPEG puro.
+    frame1 = Image.new("RGB", (10, 10), color="white")
+    frame2 = Image.new("RGB", (10, 10), color="white")
+    buf = io.BytesIO()
+    frame1.save(buf, format="MPO", save_all=True, append_images=[frame2])
+    buf.seek(0)
+    return buf.read()
+
+
 def test_health_returns_ok_even_with_api_key_configured(client, monkeypatch):
     monkeypatch.setenv("API_KEY", "super-secret")
     response = client.get("/health")
@@ -37,6 +49,23 @@ def test_ocr_allows_request_when_api_key_not_configured(client, monkeypatch, sam
     )
     assert response.status_code == 200
     assert response.json()["text"] == "texto"
+
+
+def test_ocr_accepts_mpo_image_from_phone_camera(client, monkeypatch, sample_mpo_bytes):
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = {}
+
+    def fake_run_tesseract(img, lang="por"):
+        captured["format"] = img.format
+        return "texto"
+
+    monkeypatch.setattr(main, "run_tesseract", fake_run_tesseract)
+    response = client.post(
+        "/ocr",
+        files={"image": ("foto.jpg", sample_mpo_bytes, "image/jpeg")},
+    )
+    assert response.status_code == 200
+    assert captured["format"] != "MPO"
 
 
 def test_ocr_success_logs_captured_text(client, monkeypatch, caplog, sample_png_bytes):
